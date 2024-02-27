@@ -12,4 +12,12 @@
 
 ## IR SABR project documentation
 
-[This is IR SABR doc](./src/doc/IR%sabr.pdf) This note describes SABR model specification and IR swaption pricing and risk management
+![This is IR SABR doc](./src/doc/IR%sabr.pdf) This note describes SABR model specification and IR swaption pricing and risk management
+
+
+# Installation
+
+``` wheel
+pip setup.py bdist_wheel
+pip install sabr_val-wheel-name.whl
+```
