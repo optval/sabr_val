@@ -1,0 +1,53 @@
+import os
+import numpy as np
+import pandas as pd
+from sabr_val.utils import to_year_fraction, to_strike_shift, term_tenor_conversion
+from sabr_val.ircurves.ircurve import irCurve
+from sabr_val.models.sabr import irSabrVolCube
+
+dir = os.getcwd()
+
+pathe_irvol_file = dir + '\\src\\data\\usd_irvols.csv'
+path_ircuve_file = dir + '\\src\\data\\usd_ircurve.csv'
+
+df = pd.read_csv(path_ircuve_file,sep ='\t', index_col =0)
+
+df.index = df.index.map(to_year_fraction)
+df.rename(columns={df.columns[0]: "rate"}, inplace = True)
+# assumption instruments below 1Y maturity are deposit rates with a single payemnt
+df['swap_freq'] = 2
+df.loc[df.index<1.0,'swap_freq'] = 1
+
+df_vol = pd.read_csv(pathe_irvol_file,sep ='\t', index_col =0, header =0)
+df_vol['Term'], df_vol['Tenor'] = term_tenor_conversion(df_vol.index.to_list())
+df_vol.set_index(['Term','Tenor'], inplace=True)
+
+cols = df_vol.columns.to_list()
+new_cols = [ to_strike_shift(c) for c in cols]
+df_vol.rename(columns = dict(zip(cols, new_cols)), inplace = True)
+
+# construct ir curve
+ir_crv = irCurve(df)
+
+# construct ir volcube
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.0)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.5)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 1.0)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.01)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.02)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.0)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.01)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.01, beta = 0.5)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.02, beta = 1.0)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.0, calibrate_beta = True)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.01, calibrate_beta = True)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.01, beta = 0.5, calibrate_beta = True)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.02, beta = 1.0, calibrate_beta = True)
+
+
+# ir_volcube.price(Texp, T, Tn, K, c_p)
+# ir_volcube.delta(Texp, T, Tn, K, c_p)
+# ir_volcube.vega(Texp, T, Tn, K, c_p)
+# ir_volcube.gamma(Texp, T, Tn, K, c_p)
+# ir_volcube.theta(Texp, T, Tn, K, c_p)
+# ir_volcube.carry(Texp, T, Tn, K, c_p)

@@ -1,0 +1,28 @@
+\relax 
+\newlabel{FirstPage}{{}{1}{}{}{}}
+\citation{MVS}
+\@writefile{toc}{\contentsline {section}{\numberline {I}The SABR model specification}{2}{}}
+\newlabel{sec:intro}{{I}{2}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Calibration methodology}{2}{}}
+\citation{ExpSABR}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A}User defined parameters}{3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {B}Sequential calibration approach}{3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {C}IR SABR vol cube parameter interpolation approach}{3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Swaptions calibration results.}}{4}{}}
+\newlabel{fig:swaptions_calibration_results}{{1}{4}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}Swaptions pricing and Hedging in SABR Normal}{4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Swaptions calibration errors bps.}}{5}{}}
+\newlabel{fig:swaptions_calibration_errors}{{2}{5}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A}IR swaption pricing}{5}{}}
+\citation{HedgingSABR}
+\@writefile{toc}{\contentsline {subsection}{\numberline {B}IR swaption risk adjustments}{6}{}}
+\bibcite{MVS}{{HaganVolSurfaces2018}{}{{}}{{}}}
+\bibcite{ExpSABR}{{ExplicitSABRFloch2014}{}{{}}{{}}}
+\bibcite{HedgingSABR}{{HedgingSABRBartlett}{}{{}}{{}}}
+\bibcite{SABRriskHagan}{{BartlettRiskHagan2016}{}{{}}{{}}}
+\global \chardef \firstnote@num4\relax 
+\providecommand\NAT@force@numbers{}\NAT@force@numbers
+\bibstyle{apsrev}
+\@writefile{toc}{\contentsline {section}{\numberline {}References}{9}{}}
+\newlabel{LastBibItem}{{4}{9}{}{}{}}
+\newlabel{LastPage}{{}{9}}

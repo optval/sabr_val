@@ -1,0 +1,29 @@
+from os import path
+import os, argparse, sys
+from setuptools import setup, find_packages
+
+here = os.path.abspath(os.path.dirname(__file__)) # path.join(path.abspath(path.dirname(__file__)),'src ')
+
+def read_requirements(file):
+    with open(file) as f:
+        return f.read().splitlines()
+
+def read_file(file):
+   with open(file) as f:
+        return f.read()
+    
+# = read_file("README.rst")
+#version = read_file("VERSION")
+requirements = read_requirements(path.join(here, "requirements.txt"))
+
+setup(
+    name = 'sabr val',
+    version = '0.0.05',
+    author = 'Valeriu Biniuc',
+    author_email = 'biniuc@googlemail.com',
+    #url = '',
+    description = 'sabr_val python package.',
+    python_requires=">=3.9",
+    packages = find_packages(where="src",exclude=["tests", ".github","data"]),  # Don't include test directory in binary distribution
+    package_dir = {"":"src"},
+)

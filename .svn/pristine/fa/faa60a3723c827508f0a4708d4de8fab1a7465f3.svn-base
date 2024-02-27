@@ -1,0 +1,436 @@
+import os
+import re
+import numpy as np
+import pandas as pd
+from scipy.optimize import newton
+
+
+dir = os.getcwd()
+
+pathe_irvol_file = dir + '\\src\\data\\usd_irvols.csv'
+path_ircuve_file = dir + '\\src\\data\\usd_ircurve.csv'
+
+df = pd.read_csv(path_ircuve_file,sep ='\t', index_col =0)
+
+df_vol = pd.read_csv(pathe_irvol_file,sep ='\t', index_col =0, header =0)
+
+
+def split_number_chars(s):
+    res = re.split('([-+]?\d+\.\d+)|([-+]?\d+)', s.strip())
+    res_f = [r.strip() for r in res if r is not None and r.strip() != '']
+    return res_f
+
+def to_year_fraction(s):
+    s = s.lower()
+    my_list = split_number_chars(s)
+    n = len(my_list)
+    if(n!=2):
+        raise Exception(f"Invalid # of elements. Expected 2 found {n}")
+        
+    term = int(my_list[0])
+    x = my_list[1][0]
+    
+    fraction = {'y' : 1.0, 'm' : 1.0/12.0, 'w' : 7.0/360.0, 'd' : 1.0/360.0}
+    
+    if x in list(fraction.keys()):
+        term*= fraction[x]
+    else:
+        Exception(f"Uknow fraction type {x}")
+    
+    return term
+
+
+def to_strike_shift(s):
+    s = s.lower()
+    my_list = split_number_chars(s)
+    n = len(my_list)
+
+    shift = 0.0
+    x = ' '
+    if(n==1 and my_list[0] == 'atm'):
+        shift = 0.0
+        x = 'atm'
+    elif (n==2):
+        shift = int(my_list[0])
+        x = my_list[1]
+    else:
+        raise Exception(f"Invalid # of elements. Expected 2 found {n}")
+        
+
+    fraction = {'bps' : 1.0/10000, 'atm' : 0.01, ' ' : 1.0, 'rel' : 0.01}
+    
+    if x in list(fraction.keys()):
+        shift*= fraction[x]
+    else:
+        Exception(f"Uknow fraction type {x}")
+    
+    return shift
+
+def term_tenor_conversion(term_tenor_pair):
+    term = [] 
+    tenor = []
+    for t in term_tenor_pair:
+        t1, t2 = t.lower().split(' x ')
+        term.append(to_year_fraction(t1))
+        tenor.append(to_year_fraction(t2))
+
+    return term, tenor
+
+df.index = df.index.map(to_year_fraction)
+df_vol['Term'], df_vol['Tenor'] = term_tenor_conversion(df_vol.index.to_list())
+df_vol.set_index(['Term','Tenor'], inplace=True)
+
+cols = df_vol.columns.to_list()
+new_cols = [ to_strike_shift(c) for c in cols]
+df_vol.rename(columns = dict(zip(cols, new_cols)), inplace = True)
+
+df.rename(columns={df.columns[0]: "rate"}, inplace = True)
+# assumption instruments below 1Y maturity are deposit rates with a single payemnt
+df['swap_freq'] = 2
+df.loc[df.index<1.0,'swap_freq'] = 1
+
+test_term = 0
+
+class irCurve:
+    def __init__(self, yc_curve, left_bounds_extrapolation = True, right_bound_extrapolation = True):
+    
+        self.yc_curve = yc_curve.copy()
+        self.yc_curve['zc_bond'] = 1.0
+        self.is_calibrated = False
+        self.left_extrapolation = left_bounds_extrapolation
+        self.right_extrapolation = right_bound_extrapolation
+
+        self.yc_curve.swap_freq = self.yc_curve.swap_freq.values.astype(int)
+        if(np.count_nonzero(self.yc_curve.swap_freq.values<=0)):
+            raise Exception(f"Invalid swap freq. Expected to be positive and integer egg. 1, 2, 4")
+
+        self.fit()
+        
+        
+    def fit(self):
+        n_knots = self.yc_curve.shape[0]
+        for i in range(n_knots):
+            freq_i = self.yc_curve.swap_freq.iloc[i]
+            tn = self.yc_curve.index[i]
+            n_pays = max(self.yc_curve.index[i],1) * freq_i
+            rate_i = self.yc_curve.rate.iloc[i] / 100.0
+            df_prev = 1.0
+            t_prev = 0.0
+            if(i):
+                df_prev = self.yc_curve.zc_bond.iloc[i-1]  
+                t_prev = self.yc_curve.index[i-1]
+
+
+            dcf_i = 1.0/freq_i if tn >= 1.0 else tn
+
+            df_n = df_prev
+            if tn<1.0 :
+                df_n = 1.0 / (1.0 + rate_i * dcf_i)
+            else :
+
+                try:
+                    c = 1.0
+                    c_i = rate_i * dcf_i
+                    k = 1
+                    tk = dcf_i
+                    while k < n_pays and tk <= t_prev:
+                        c -= c_i*self.zc_bond(tk)
+                        k +=1
+                        tk += dcf_i
+
+                    def obj_func(x, t1, t2, freq, ci, df, a):
+
+                        #at least 1 coupon is paid between previous swap maturity date and current swap maturity
+                        n = max(int ((t2-t1) * freq),1)
+
+                        f = -a
+                        for k in range(n):
+                            tk = min(t1 + (k+1) / freq,t2)
+                            dt = (tk - t1)/(t2 - t1)
+                            dfk= pow(x/df, dt)
+                            f += (ci + (k==(n-1)))*df*dfk
+
+                        return f
+                    
+                    df_n = newton(obj_func, df_n, args=(t_prev, tn, freq_i, c_i, df_prev,c), maxiter=200)         
+                
+                except:
+                    raise Exception(f"irCurve failed to boostrap at step {i}, term {tn} , rate {rate_i} ")
+                
+            self.yc_curve.zc_bond.iloc[i] = df_n
+        
+
+
+        self.is_calibrated = True
+        
+    
+    def zc_bond(self, t: float):
+        t0 = self.yc_curve.index[0]
+        tn = self.yc_curve.index[-1]
+
+        y = 1.0
+        if(t <=t0 and self.left_extrapolation) :
+            y =  pow(self.yc_curve.zc_bond.iloc[0], t /t0)
+        elif(t >=tn and self.right_extrapolation) :
+            y = pow(self.yc_curve.zc_bond.iloc[-1], t /tn)
+        elif(t>t0 and t <tn):
+
+            # Find upper neighbours for each interpolation point
+            idx = np.searchsorted(self.yc_curve.index.values, t, side='left', sorter=None)
+
+            # Get the two neighbours for each interpolation point
+            t0 = self.yc_curve.index[idx - 1]
+            t1 = self.yc_curve.index[idx]
+
+            y0 = self.yc_curve.zc_bond.iloc[idx-1]
+            y1 = self.yc_curve.zc_bond.iloc[idx]
+
+            # Coefficient for weighting between lower and upper bounds
+            dt = (t - t0) / (t1 - t0)
+
+            y = y0 * pow(y1/y0,dt)
+        else:
+            raise  ValueError(f"Cannot calculate zc_bond.")
+        
+        
+    
+        return y
+    
+    def swapRate(self, t : float, Tn: float, swap_freq : int = 2):
+        dt = Tn -t
+    
+        if(t >=0 and Tn < 1.0) :
+            return (self.zc_bond(t)/ self.zc_bond(t+Tn) -1.0) /dt
+        elif (t>=0 and Tn >= 1.0):
+
+            df0 = self.zc_bond(t)
+            dfn = self.zc_bond(t+Tn)
+            
+            pv01 = self.PV01( t , Tn, swap_freq)
+
+            rate = (df0 - dfn) / pv01
+
+            return rate
+        else :
+            raise  ValueError(f"Swap rate cannot have  maturity date lower than start date. ")
+
+    def PV01(self, t : float, Tn: float, swap_freq : int = 2):
+        
+        n = max(int(Tn * float(swap_freq)),1)
+        dcf = 1.0/ float(swap_freq)
+            
+        pv01 = 0.0
+        if(Tn >=dcf ) :
+
+            pv01 = 0
+            for i in range(n):
+                ti = t + dcf*(i+1)
+                pv01 += dcf * self.zc_bond(ti)
+        else :
+            raise  ValueError(f"Swap rate cannot have  maturity date lower than start date. ")
+        
+        return pv01
+    
+    #def zc_bond(self, t, Tn):
+    #    return self.zc_bond(Tn) / self.zc_bond(t)
+    
+ir_crv = irCurve(df)
+
+print(ir_crv.zc_bond(1.0))
+print(ir_crv.swapRate(0.0,1.0))
+print(ir_crv.PV01(0.0,1.0))
+print(ir_crv.zc_bond(2.0))
+print(ir_crv.swapRate(0.0,2.0))
+print(ir_crv.PV01(0.0,2.0))
+print(ir_crv.swapRate(2.0,2.0))
+print(ir_crv.PV01(2.0,2.0))
+print(ir_crv.zc_bond(3.0))
+print(ir_crv.swapRate(0.0,3.0))
+print(ir_crv.zc_bond(4.0))
+print(ir_crv.swapRate(0.0,4.0))
+
+
+class sabr_normal:
+    def __init__(self, Fwd, shift = 0.0, beta = 0.5, alpha = 0.1, rho = 0.5, nu = 0.1):
+        self.Fwd = Fwd
+        self.shift = shift
+        self.beta = beta
+        self.alpha = alpha
+        self.rho = rho
+        self.nu = nu
+
+        self.eps = 1e-06
+
+        if  (self.alpha <= 0.0):
+            raise  ValueError(f"alpha should be positive. ")
+    
+        if  (self.beta < 0.0):
+            raise  ValueError(f"beta should be positive. ")
+        
+        if abs(1.0 - self.beta)<self.eps and  (self.Fwd + self.shift) < self.eps :
+            raise  ValueError(f"when beta is close to 1 lognormal, Shifted forward rate should be positive. ")
+        
+        if (self.nu < 0.0):
+            raise  ValueError(f"nu should be non negative. ")
+    
+    def vol(self, K : float, T : float):
+        atm = self._f_minus_k_ratio(K)
+        A = self._g_k(K)
+        B = 0.25 * self.rho * self.nu * self.alpha * self.beta * pow((self.Fwd + self.shift)*(K + self.shift), 0.5*(self.beta - 1))
+        C = (2-3*self.rho**2) * self.nu**2 / 24.0
+        return atm * (1.0 + (A + B + C) * T)
+    
+
+    def _zeta(self, K):
+        
+        m_beta = 1.0 - self.beta
+
+        if abs(self.beta) < self.eps:
+            zeta = 1 / self.alpha * (self.Fwd - K)
+        elif abs(m_beta) < self.eps:
+            zeta = 1 / self.alpha * np.log((self.Fwd + self.shift)/(K + self.shift))
+        else:
+            zeta = 1 / (self.alpha * m_beta) *(pow(self.Fwd + self.shift,m_beta)-pow(K + self.shift,m_beta))
+
+        if (self.nu > 0.0):
+            zeta *= self.nu
+
+        return zeta
+        
+
+    
+    def _x(self, K):
+
+        zeta = self._zeta(K)
+
+        if (self.nu > 0.0):
+            a = (1 - 2*self.rho*zeta + zeta**2)**.5 - self.rho + zeta
+            b = 1 - self.rho
+            return np.log(a / b) / self.nu
+        else:
+            return zeta
+        
+    def _f_minus_k_ratio(self, K):
+
+        if abs(self.Fwd-K) > self.eps:
+            return (self.Fwd - K) / self._x(K)
+        else:
+            if abs(self.Fwd + self.shift)>self.eps:
+                return self.alpha * pow(self.Fwd + self.shift, self.beta)
+            else:
+                return self.alpha * pow(self.eps, self.beta)
+        
+    def _g_k(self, K):
+
+        g_k = 0.0
+        m_beta = 1.0 - self.beta
+        if(abs(m_beta)<self.eps):
+            g_k = -self.alpha**2/24.0
+        else:
+            g_k = self.alpha**2/24.0 * self.beta * (self.beta - 2) * pow((self.Fwd + self.shift)*(K + self.shift), self.beta - 1)
+        
+        return g_k
+
+
+f = 2014
+beta = 1.0
+alpha = 3.24
+rho = -0.998
+nu = 1.69
+sabr_vol_test = sabr_normal(Fwd = f, shift = 0.0, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test.vol(K = f, T = 0.48)
+print(vol)
+vol2 = 0.0
+
+
+T = 10.0
+f = 0.02
+K = 0.02
+shift = 0.0
+beta = 0.0
+alpha = 0.5/100
+rho = 0.5
+nu = 20/100
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = 0.01
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = 0.0
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = -0.01
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = -0.02
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = 0.03
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = 0.05
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = 0.07
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+K = 0.09
+sabr_vol_test2 = sabr_normal(Fwd = f, shift = shift, beta = beta, alpha = alpha, rho = rho, nu = nu)
+vol = sabr_vol_test2.vol(K = K, T = T)
+print(vol)
+vol2 = 0.0
+    
+class irSabrVolCube:
+    def __init__(self, ir_vols, ir_curve: irCurve, shift = 0.0, beta = 0.5, alpha = 0.1, rho = 0.0, nu = 0.1, calibrate_beta = False, left_bounds_extrapolation = True, right_bound_extrapolation = False):
+    
+        self.ir_vols = ir_vols
+        self.ir_curve = ir_curve
+        self.left_extrapolation = left_bounds_extrapolation
+        self.right_extrapolation = right_bound_extrapolation
+
+        self.d_strikes = self.ir_vols.columns.to_list()
+
+        self.ir_vols['shift'] = shift
+        self.ir_vols['beta'] = beta
+        self.ir_vols['alpha'] = alpha
+        self.ir_vols['rho'] = rho
+        self.ir_vols['nu'] = nu
+
+        self.fit()
+        
+        
+    def fit(self):
+        n_knots = self.ir_vols.shape[0]
+
+        for i  in range(n_knots):
+            term, tenor = self.ir_vols.index[i]
+            
+
+
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.01)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.02)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.0)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.01)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.01, beta = 0.5)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.02, beta = 1.0)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.0, calibrate_beta = True)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.00, beta = 0.01, calibrate_beta = True)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.01, beta = 0.5, calibrate_beta = True)
+ir_volcube = irSabrVolCube(ir_vols = df_vol, ir_curve = ir_crv, shift = 0.02, beta = 1.0, calibrate_beta = True)
+
+
+# ir_volcube.price(Texp, T, Tn, K, c_p)
+# ir_volcube.delta(Texp, T, Tn, K, c_p)
+# ir_volcube.vega(Texp, T, Tn, K, c_p)
+# ir_volcube.gamma(Texp, T, Tn, K, c_p)
+# ir_volcube.theta(Texp, T, Tn, K, c_p)
+# ir_volcube.carry(Texp, T, Tn, K, c_p)

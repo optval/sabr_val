@@ -1,0 +1,117 @@
+import os
+import re
+import numpy as np
+import pandas as pd
+from scipy.optimize import newton
+from sabr_val.ircurves.ircurve import irCurve
+
+
+class sabr_normal:
+    def __init__(self, Fwd, shift = 0.0, beta = 0.5, alpha = 0.1, rho = 0.5, nu = 0.1):
+        self.Fwd = Fwd
+        self.shift = shift
+        self.beta = beta
+        self.alpha = alpha
+        self.rho = rho
+        self.nu = nu
+
+        self.eps = 1e-06
+
+        if  (self.alpha <= 0.0):
+            raise  ValueError(f"alpha should be positive. ")
+    
+        if  (self.beta < 0.0):
+            raise  ValueError(f"beta should be positive. ")
+        
+        if abs(1.0 - self.beta)<self.eps and  (self.Fwd + self.shift) < self.eps :
+            raise  ValueError(f"when beta is close to 1 lognormal, Shifted forward rate should be positive. ")
+        
+        if (self.nu < 0.0):
+            raise  ValueError(f"nu should be non negative. ")
+    
+    def vol(self, K : float, T : float):
+        atm = self._f_minus_k_ratio(K)
+        A = self._g_k(K)
+        B = 0.25 * self.rho * self.nu * self.alpha * self.beta * pow((self.Fwd + self.shift)*(K + self.shift), 0.5*(self.beta - 1))
+        C = (2-3*self.rho**2) * self.nu**2 / 24.0
+        return atm * (1.0 + (A + B + C) * T)
+    
+
+    def _zeta(self, K):
+        
+        m_beta = 1.0 - self.beta
+
+        if abs(self.beta) < self.eps:
+            zeta = 1 / self.alpha * (self.Fwd - K)
+        elif abs(m_beta) < self.eps:
+            zeta = 1 / self.alpha * np.log((self.Fwd + self.shift)/(K + self.shift))
+        else:
+            zeta = 1 / (self.alpha * m_beta) *(pow(self.Fwd + self.shift,m_beta)-pow(K + self.shift,m_beta))
+
+        if (self.nu > 0.0):
+            zeta *= self.nu
+
+        return zeta
+        
+
+    
+    def _x(self, K):
+
+        zeta = self._zeta(K)
+
+        if (self.nu > 0.0):
+            a = (1 - 2*self.rho*zeta + zeta**2)**.5 - self.rho + zeta
+            b = 1 - self.rho
+            return np.log(a / b) / self.nu
+        else:
+            return zeta
+        
+    def _f_minus_k_ratio(self, K):
+
+        if abs(self.Fwd-K) > self.eps:
+            return (self.Fwd - K) / self._x(K)
+        else:
+            if abs(self.Fwd + self.shift)>self.eps:
+                return self.alpha * pow(self.Fwd + self.shift, self.beta)
+            else:
+                return self.alpha * pow(self.eps, self.beta)
+        
+    def _g_k(self, K):
+
+        g_k = 0.0
+        m_beta = 1.0 - self.beta
+        if(abs(m_beta)<self.eps):
+            g_k = -self.alpha**2/24.0
+        else:
+            g_k = self.alpha**2/24.0 * self.beta * (self.beta - 2) * pow((self.Fwd + self.shift)*(K + self.shift), self.beta - 1)
+        
+        return g_k
+
+
+class irSabrVolCube:
+    def __init__(self, ir_vols, ir_curve: irCurve, shift = 0.0, beta = 0.5, alpha = 0.1, rho = 0.0, nu = 0.1, calibrate_beta = False, left_bounds_extrapolation = True, right_bound_extrapolation = False):
+    
+        self.ir_vols = ir_vols
+        self.ir_curve = ir_curve
+        self.left_extrapolation = left_bounds_extrapolation
+        self.right_extrapolation = right_bound_extrapolation
+
+        self.d_strikes = self.ir_vols.columns.to_list()
+
+        self.ir_vols['shift'] = shift
+        self.ir_vols['beta'] = beta
+        self.ir_vols['alpha'] = alpha
+        self.ir_vols['rho'] = rho
+        self.ir_vols['nu'] = nu
+
+        self.fit()
+        
+        
+    def fit(self):
+        n_knots = self.ir_vols.shape[0]
+
+        for i  in range(n_knots):
+            term, tenor = self.ir_vols.index[i]
+            
+
+

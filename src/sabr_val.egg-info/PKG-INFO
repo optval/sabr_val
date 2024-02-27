@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: sabr-val
+Version: 0.0.5
+Summary: sabr_val python package.
+Author: Valeriu Biniuc
+Author-email: biniuc@googlemail.com
+Requires-Python: >=3.9
