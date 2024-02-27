@@ -13,7 +13,7 @@
 
 ## IR SABR project documentation
 
-![This is IR SABR doc](./src/doc/IR%sabr.pdf) This note describes SABR model specification and IR swaption pricing and risk management
+![This is IR SABR doc](./src/doc/IR%20sabr.pdf) This note describes SABR model specification and IR swaption pricing and risk management
 
 
 ## Installation
